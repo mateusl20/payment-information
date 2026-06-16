@@ -1,0 +1,56 @@
+
+
+
+Security
+            * OAuth2 + JWT Bearer token
+            * Never cache raw sensitive data (IBAN, card toke)
+            * IBAN encrypted at rest and masked in API responses
+            * Secrets managed in Vault / Kubernetes secrets
+
+Cache:
+            * As it handles sensitive data, I would analyse to see the impact of the cache use. Its better to lose a bit of performance here and garantee correctness.
+            * Redis — cache payment method lists and contract assignments 
+            * Key: payment_methods:{customerId} TTL: 5-10 min.
+            * Invalidate on any write to that customer's methods.
+            * Never cache raw sensitive fields (IBAN, tokens).
+
+Fail Tolerance:
+            * API Gateway:
+                * We can have a rate limiter, to avoid charges too big at once
+                * Circuit breaker: if the service is returning 500s, returns fast faliures instead of queuing requests
+            * Service 
+                * Circuit breaker in outbound calls: if PSP is down we store the token and try again later, without failing the payment info update. (Resilience4j)
+                * Cache miss: don't allow a cache miss to return an error, go to db and get the data.
+                * Idempotency keys on write endpoints to make client retries safe. 
+            * Database
+                * DB and outbox writes are atomic. No event os Kafka if the transaction fails
+                * Read can be done on replica writes always go to primary. If writes are slow, read are not affected
+            * Kafka + Outbox
+                * Consumer offset commit only after successful call to SAP
+                * No event published to Kafka without the guarantee that the DB write succeeded first.
+                * Outbox sits with sent_at = NULL until broker is reachable.
+                * SAP downtime never blocks customer-facing writes.
+            * Payment Sync Worker
+                * Exponential retries, and after max retries send to DLT for treatment. (Jitter)
+                * Separate deployable, can work independently from the main service, doesn't break the flow if its down.
+            * Health Checks and Multiple Instances
+                * Have more than one instance and have synced with Kubernetes to restart failing instance
+
+Tracebility
+            * Audit Log
+                * Append-only table, never updated or deleted
+                * Written in same transaction as domain write
+                * Stores before and after state as JSON
+                * Records actor (customer/agent/system), timestamp, action and aggregate affected
+                * Used for: billing disputes, GDPR requests, regulatory audits
+            * Contract-Payment-Method-History table
+                * Append only
+                * Record information about a contracts payment method history at a point
+
+Distributed Tracing
+            * Every request gets a correlationId at the API Gateway
+            * Travels through: HTTP headers, Kafka message headers, log entries
+            * MDC in Spring Boot adds it to every log line automatically
+            * Search one ID and see full journey across all services
+            * Tools: OpenTelemetry
+
