@@ -1,6 +1,3 @@
-
-
-
 Security
             * OAuth2 + JWT Bearer token
             * Never cache raw sensitive data (IBAN, card toke)
